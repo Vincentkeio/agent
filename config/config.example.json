@@ -1,0 +1,13 @@
+{
+  "master_ws_url": "wss://YOUR_DOMAIN/agent/ws",
+  "token": "PASTE_TOKEN_HERE",
+  "agent_id": "",
+  "alias": "",
+  "metrics_interval_ms": 1000,
+  "net_iface": "auto",
+  "insecure_skip_verify": false,
+  "tcpping": {
+    "enabled": false,
+    "interval_sec": 15
+  }
+}

@@ -1,0 +1,19 @@
+[Unit]
+Description=kokoro agent (Go)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/kokoro-agent --config /etc/kokoro-agent/config.json
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+# Hardening (keep minimal)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
