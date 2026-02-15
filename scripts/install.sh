@@ -1,92 +1,89 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage:
-#   bash install.sh --master wss://YOUR_DOMAIN/agent/ws --token TOKEN [--alias NAME] [--reset-id]
-#
-# Notes:
-# - This script installs /usr/local/bin/kokoro-agent, writes /etc/kokoro-agent/config.json,
-#   installs a systemd unit, and starts the service.
-# - To "become a new agent", run again with --reset-id (it clears agent_id so the binary will generate a new UUID).
+REPO="Vincentkeio/agent"
+BIN_NAME="kokoro-agent"
+
+CONFIG_DIR="/etc/kokoro-agent"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
+BIN_PATH="/usr/local/bin/${BIN_NAME}"
+UNIT_PATH="/etc/systemd/system/kokoro-agent.service"
 
 MASTER=""
 TOKEN=""
 ALIAS=""
 RESET_ID="0"
-CONFIG_DIR="/etc/kokoro-agent"
-CONFIG_FILE="$CONFIG_DIR/config.json"
-BIN_PATH="/usr/local/bin/kokoro-agent"
-UNIT_PATH="/etc/systemd/system/kokoro-agent.service"
+INSECURE="0"
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --master) MASTER="${2:-}"; shift 2;;
-    --token) TOKEN="${2:-}"; shift 2;;
-    --alias) ALIAS="${2:-}"; shift 2;;
-    --reset-id) RESET_ID="1"; shift 1;;
-    *) echo "Unknown arg: $1" >&2; exit 2;;
+usage() {
+  cat <<'EOF'
+Usage:
+  install.sh --master <wss://domain/agent/ws> --token <TOKEN> [--alias <NAME>] [--reset-id] [--insecure-skip-verify]
+EOF
+}
+
+need_root() { [ "$(id -u)" -eq 0 ] || { echo "❌ run as root (sudo)"; exit 1; }; }
+
+detect_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) echo "amd64" ;;
+    aarch64|arm64) echo "arm64" ;;
+    *) echo "❌ unsupported arch"; exit 3 ;;
   esac
-done
+}
 
-[[ -n "$MASTER" ]] || { echo "Missing --master" >&2; exit 2; }
-[[ -n "$TOKEN" ]]  || { echo "Missing --token" >&2; exit 2; }
+download_latest_release() {
+  local arch="$1"
+  local asset="${BIN_NAME}_linux_${arch}.tar.gz"
+  local url="https://github.com/${REPO}/releases/latest/download/${asset}"
 
-echo "== install kokoro-agent =="
+  echo "== download ${asset} =="
+  local tmpd; tmpd="$(mktemp -d)"; trap 'rm -rf "$tmpd"' EXIT
+  curl -fsSL "$url" -o "$tmpd/pkg.tgz"
+  tar -xzf "$tmpd/pkg.tgz" -C "$tmpd"
+  install -m 0755 "$tmpd/${BIN_NAME}" "$BIN_PATH"
+}
 
-mkdir -p "$CONFIG_DIR"
+preserve_agent_id() {
+  [ "$RESET_ID" = "1" ] && return 0
+  [ -f "$CONFIG_FILE" ] || return 0
+  grep -oE '"agent_id"[[:space:]]*:[[:space:]]*"[^"]+"' "$CONFIG_FILE" | head -n1 \
+    | sed -E 's/.*"([^"]+)".*/\1/' || true
+}
 
-ARCH="$(uname -m)"
-OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-case "$ARCH" in
-  x86_64|amd64) ARCH="amd64";;
-  aarch64|arm64) ARCH="arm64";;
-  *) echo "Unsupported arch: $ARCH" >&2; exit 2;;
-esac
+write_config() {
+  mkdir -p "$CONFIG_DIR"
+  chmod 0755 "$CONFIG_DIR"
 
-# ---- Download binary from GitHub Release (EDIT THESE TWO LINES after you publish) ----
-# REPO="YOUR_GITHUB_USER/kokoro-agent"
-# URL="https://github.com/${REPO}/releases/latest/download/kokoro-agent_${OS}_${ARCH}.tar.gz"
-# For now, fallback to building from source if URL is empty.
-URL=""
+  local keep_id=""; keep_id="$(preserve_agent_id || true)"
+  local agent_id_line
+  if [ "$RESET_ID" = "1" ]; then
+    agent_id_line='  "agent_id": ""'
+  elif [ -n "$keep_id" ]; then
+    agent_id_line="  \"agent_id\": \"${keep_id}\""
+  else
+    agent_id_line='  "agent_id": ""'
+  fi
 
-tmpdir="$(mktemp -d)"
-trap 'rm -rf "$tmpdir"' EXIT
+  local alias_line=""
+  [ -n "$ALIAS" ] && alias_line="  \"alias\": \"${ALIAS}\","
 
-if [[ -n "$URL" ]]; then
-  echo "Downloading: $URL"
-  curl -fsSL "$URL" -o "$tmpdir/agent.tgz"
-  tar -xzf "$tmpdir/agent.tgz" -C "$tmpdir"
-  install -m 0755 "$tmpdir/kokoro-agent" "$BIN_PATH"
-else
-  echo "No release URL configured; building from source requires git + go."
-  command -v git >/dev/null || { echo "git not found" >&2; exit 2; }
-  command -v go >/dev/null || { echo "go not found" >&2; exit 2; }
-  git clone --depth=1 https://github.com/YOUR_GITHUB_USER/kokoro-agent "$tmpdir/src"
-  (cd "$tmpdir/src" && go build -o "$tmpdir/kokoro-agent" ./cmd/kokoro-agent)
-  install -m 0755 "$tmpdir/kokoro-agent" "$BIN_PATH"
-fi
-
-# Write config (keep agent_id blank to allow auto-generate, unless existing file has id and no reset requested)
-AGENT_ID=""
-if [[ -f "$CONFIG_FILE" && "$RESET_ID" != "1" ]]; then
-  AGENT_ID="$(python3 -c 'import json;import sys; p=sys.argv[1]; d=json.load(open(p)); print(d.get("agent_id",""))' "$CONFIG_FILE" 2>/dev/null || true)"
-fi
-
-cat > "$CONFIG_FILE" <<JSON
+  cat >"$CONFIG_FILE" <<EOF
 {
-  "master_ws_url": "$(printf %s "$MASTER" | sed 's/"/\\"/g')",
-  "token": "$(printf %s "$TOKEN" | sed 's/"/\\"/g')",
-  "agent_id": "$(printf %s "$AGENT_ID" | sed 's/"/\\"/g')",
-  "alias": "$(printf %s "$ALIAS" | sed 's/"/\\"/g')",
+  "master_ws_url": "${MASTER}",
+  "token": "${TOKEN}",
+${alias_line}
+${agent_id_line},
   "metrics_interval_ms": 1000,
   "net_iface": "auto",
-  "insecure_skip_verify": false,
-  "tcpping": { "enabled": false, "interval_sec": 15 }
+  "insecure_skip_verify": $( [ "$INSECURE" = "1" ] && echo "true" || echo "false" )
 }
-JSON
+EOF
+  chmod 0600 "$CONFIG_FILE"
+}
 
-# systemd unit
-cat > "$UNIT_PATH" <<'UNIT'
+write_unit() {
+  cat >"$UNIT_PATH" <<EOF
 [Unit]
 Description=kokoro agent (Go)
 After=network-online.target
@@ -94,8 +91,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/kokoro-agent --config /etc/kokoro-agent/config.json
-ExecReload=/bin/kill -HUP $MAINPID
+ExecStart=${BIN_PATH} --config ${CONFIG_FILE}
+ExecReload=/bin/kill -HUP \$MAINPID
 Restart=always
 RestartSec=2
 LimitNOFILE=65535
@@ -104,12 +101,34 @@ PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
-UNIT
+EOF
+}
 
-systemctl daemon-reload
-systemctl enable --now kokoro-agent.service
+enable_start() {
+  systemctl daemon-reload
+  systemctl enable --now kokoro-agent.service
+  systemctl --no-pager -l status kokoro-agent.service | sed -n '1,25p' || true
+  echo "Logs: journalctl -u kokoro-agent.service -f --no-pager"
+}
 
-echo "✅ installed. logs: journalctl -u kokoro-agent.service -f --no-pager"
-if [[ "$RESET_ID" == "1" ]]; then
-  echo "ℹ️ --reset-id was used, agent_id will be regenerated on first start."
-fi
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --master) MASTER="${2:-}"; shift 2;;
+    --token) TOKEN="${2:-}"; shift 2;;
+    --alias) ALIAS="${2:-}"; shift 2;;
+    --reset-id) RESET_ID="1"; shift;;
+    --insecure-skip-verify) INSECURE="1"; shift;;
+    -h|--help) usage; exit 0;;
+    *) echo "Unknown arg: $1"; usage; exit 1;;
+  esac
+done
+
+need_root
+[ -n "$MASTER" ] && [ -n "$TOKEN" ] || { usage; exit 1; }
+command -v systemctl >/dev/null 2>&1 || { echo "❌ systemd required"; exit 6; }
+
+arch="$(detect_arch)"
+download_latest_release "$arch"
+write_config
+write_unit
+enable_start
