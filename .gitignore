@@ -1,0 +1,5 @@
+
+# build artifacts
+kokoro-agent
+dist/
+*.tar.gz
