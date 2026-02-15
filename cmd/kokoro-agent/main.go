@@ -8,8 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/yourname/kokoro-agent/internal/agent"
-	"github.com/yourname/kokoro-agent/internal/config"
+	"github.com/Vincentkeio/agent/internal/agent"
+	"github.com/Vincentkeio/agent/internal/config"
 )
 
 func main() {

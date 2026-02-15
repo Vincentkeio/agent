@@ -11,11 +11,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yourname/kokoro-agent/internal/config"
-	"github.com/yourname/kokoro-agent/internal/metrics"
-	"github.com/yourname/kokoro-agent/internal/netprobe"
-	"github.com/yourname/kokoro-agent/internal/tcpping"
-	"github.com/yourname/kokoro-agent/internal/ws"
+	"github.com/Vincentkeio/agent/internal/config"
+	"github.com/Vincentkeio/agent/internal/metrics"
+	"github.com/Vincentkeio/agent/internal/netprobe"
+	"github.com/Vincentkeio/agent/internal/tcpping"
+	"github.com/Vincentkeio/agent/internal/ws"
 )
 
 type runtimeConfig struct {
