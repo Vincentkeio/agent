@@ -13,11 +13,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        arch: [amd64, arm64]
+        goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version: "1.21"
@@ -26,7 +26,7 @@ jobs:
         run: |
           set -eux
           mkdir -p dist
-          GOOS=linux GOARCH=${{ matrix.arch }} CGO_ENABLED=0 \
+          GOOS=linux GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
             go build -trimpath -ldflags "-s -w" \
             -o dist/kokoro-agent ./cmd/kokoro-agent
 
@@ -34,9 +34,9 @@ jobs:
         run: |
           set -eux
           cd dist
-          tar -czf kokoro-agent_linux_${{ matrix.arch }}.tar.gz kokoro-agent
+          tar -czf kokoro-agent_linux_${{ matrix.goarch }}.tar.gz kokoro-agent
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/kokoro-agent_linux_${{ matrix.arch }}.tar.gz
+          files: dist/kokoro-agent_linux_${{ matrix.goarch }}.tar.gz
