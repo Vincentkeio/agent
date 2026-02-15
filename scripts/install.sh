@@ -15,43 +15,47 @@ ALIAS=""
 RESET_ID="0"
 INSECURE="0"
 
-usage() {
-  cat <<'EOF'
-Usage:
-  install.sh --master <wss://domain/agent/ws> --token <TOKEN> [--alias <NAME>] [--reset-id] [--insecure-skip-verify]
-EOF
-}
+usage(){ echo 'Usage: install.sh --master <wss://domain/agent/ws> --token <TOKEN> [--alias <NAME>] [--reset-id] [--insecure-skip-verify]'; }
+need_root(){ [ "$(id -u)" -eq 0 ] || { echo "❌ run as root (sudo)"; exit 1; }; }
 
-need_root() { [ "$(id -u)" -eq 0 ] || { echo "❌ run as root (sudo)"; exit 1; }; }
-
-detect_arch() {
+detect_arch(){
   case "$(uname -m)" in
-    x86_64|amd64) echo "amd64" ;;
-    aarch64|arm64) echo "arm64" ;;
-    *) echo "❌ unsupported arch"; exit 3 ;;
+    x86_64|amd64) echo "amd64";;
+    aarch64|arm64) echo "arm64";;
+    *) echo "❌ unsupported arch: $(uname -m)"; exit 3;;
   esac
 }
 
-download_latest_release() {
+download_latest_release(){
   local arch="$1"
   local asset="${BIN_NAME}_linux_${arch}.tar.gz"
   local url="https://github.com/${REPO}/releases/latest/download/${asset}"
 
   echo "== download ${asset} =="
-  local tmpd; tmpd="$(mktemp -d)"; trap 'rm -rf "$tmpd"' EXIT
-  curl -fsSL "$url" -o "$tmpd/pkg.tgz"
-  tar -xzf "$tmpd/pkg.tgz" -C "$tmpd"
-  install -m 0755 "$tmpd/${BIN_NAME}" "$BIN_PATH"
+  TMPD="$(mktemp -d)"
+  trap 'rm -rf "$TMPD" 2>/dev/null || true' EXIT
+
+  if ! curl -fsSL "$url" -o "$TMPD/pkg.tgz"; then
+    echo "❌ 下载失败（通常是 Release 里没这个资产）：${asset}"
+    echo "   去 Releases 确认同时存在："
+    echo "   - kokoro-agent_linux_amd64.tar.gz"
+    echo "   - kokoro-agent_linux_arm64.tar.gz"
+    exit 4
+  fi
+
+  tar -xzf "$TMPD/pkg.tgz" -C "$TMPD"
+  install -m 0755 "$TMPD/${BIN_NAME}" "$BIN_PATH"
+  echo "✅ installed: $BIN_PATH"
 }
 
-preserve_agent_id() {
+preserve_agent_id(){
   [ "$RESET_ID" = "1" ] && return 0
   [ -f "$CONFIG_FILE" ] || return 0
   grep -oE '"agent_id"[[:space:]]*:[[:space:]]*"[^"]+"' "$CONFIG_FILE" | head -n1 \
     | sed -E 's/.*"([^"]+)".*/\1/' || true
 }
 
-write_config() {
+write_config(){
   mkdir -p "$CONFIG_DIR"
   chmod 0755 "$CONFIG_DIR"
 
@@ -80,9 +84,10 @@ ${agent_id_line},
 }
 EOF
   chmod 0600 "$CONFIG_FILE"
+  echo "✅ wrote config: $CONFIG_FILE"
 }
 
-write_unit() {
+write_unit(){
   cat >"$UNIT_PATH" <<EOF
 [Unit]
 Description=kokoro agent (Go)
@@ -102,9 +107,10 @@ PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 EOF
+  echo "✅ wrote unit: $UNIT_PATH"
 }
 
-enable_start() {
+enable_start(){
   systemctl daemon-reload
   systemctl enable --now kokoro-agent.service
   systemctl --no-pager -l status kokoro-agent.service | sed -n '1,25p' || true
